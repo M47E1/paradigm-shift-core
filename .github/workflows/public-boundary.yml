@@ -1,0 +1,194 @@
+name: Public Boundary
+
+on:
+  workflow_run:
+    workflows: ["Public Boundary Request"]
+    types: [completed]
+
+permissions:
+  actions: read
+  checks: write
+  contents: read
+  pull-requests: read
+
+jobs:
+  trusted-runner:
+    name: trusted-public-boundary-runner
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the trusted default-branch scanner
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Use the repository Node.js version
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Resolve and authenticate the associated pull request
+        id: resolve
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_HEAD_REPO_ID: ${{ github.event.workflow_run.head_repository.id }}
+          RUN_HEAD_REPO_NAME: ${{ github.event.workflow_run.head_repository.full_name }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_PULL_REQUESTS: ${{ toJson(github.event.workflow_run.pull_requests) }}
+          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
+          TRIGGER_WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+        run: |
+          [[ "$TRIGGER_EVENT" == "pull_request" ]]
+          [[ "$RUN_ATTEMPT" =~ ^[0-9]+$ ]]
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$RUN_HEAD_REPO_ID" =~ ^[0-9]+$ ]]
+          [[ "$RUN_HEAD_SHA" =~ ^[0-9a-f]{40,64}$ ]]
+          [[ -n "$RUN_HEAD_BRANCH" ]]
+          [[ -n "$RUN_HEAD_REPO_NAME" ]]
+
+          workflow_path="$(
+            gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$TRIGGER_WORKFLOW_ID" \
+              --jq '.path'
+          )"
+          [[ "$workflow_path" == ".github/workflows/public-boundary-request.yml" ]]
+
+          matching_artifacts=0
+          pr_number=
+          while IFS= read -r artifact_name; do
+            if [[ "$artifact_name" =~ ^public-boundary-request-([0-9]+)-${RUN_ATTEMPT}$ ]]; then
+              matching_artifacts=$((matching_artifacts + 1))
+              pr_number="${BASH_REMATCH[1]}"
+            fi
+          done < <(
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.expired == false) | .name'
+          )
+          [[ "$matching_artifacts" -eq 1 ]]
+          [[ "$pr_number" =~ ^[0-9]+$ ]]
+
+          IFS=$'\t' read -r state base_sha head_sha head_ref head_repo_id \
+            head_repo_name merge_sha < <(
+              gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number" \
+                --jq '[.state, .base.sha, .head.sha, .head.ref, (.head.repo.id | tostring), .head.repo.full_name, .merge_commit_sha] | @tsv'
+            )
+          [[ "$state" == "open" ]]
+          [[ "$base_sha" =~ ^[0-9a-f]{40,64}$ ]]
+          [[ "$head_sha" == "$RUN_HEAD_SHA" ]]
+          [[ "$head_ref" == "$RUN_HEAD_BRANCH" ]]
+          [[ "$head_repo_id" == "$RUN_HEAD_REPO_ID" ]]
+          [[ "${head_repo_name,,}" == "${RUN_HEAD_REPO_NAME,,}" ]]
+          [[ "$merge_sha" =~ ^[0-9a-f]{40,64}$ ]]
+
+          association_count="$(jq 'length' <<< "$RUN_PULL_REQUESTS")"
+          [[ "$association_count" =~ ^[0-9]+$ ]]
+          if [[ "$association_count" -gt 0 ]]; then
+            association_matches="$(
+              jq --argjson number "$pr_number" \
+                '[.[] | select(.number == $number)] | length' \
+                <<< "$RUN_PULL_REQUESTS"
+            )"
+            [[ "$association_matches" -eq 1 ]]
+          fi
+
+          {
+            echo "pr_number=$pr_number"
+            echo "base_sha=$base_sha"
+            echo "head_sha=$head_sha"
+            echo "head_ref=$head_ref"
+            echo "head_repo_id=$head_repo_id"
+            echo "head_repo_name=$head_repo_name"
+            echo "merge_sha=$merge_sha"
+          } >> "$GITHUB_OUTPUT"
+      - name: Fetch and verify pull request commits without checking them out
+        id: fetch
+        continue-on-error: true
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.resolve.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
+          MERGE_SHA: ${{ steps.resolve.outputs.merge_sha }}
+          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+        run: |
+          git fetch --no-tags origin \
+            "pull/$PR_NUMBER/head:refs/remotes/pull/$PR_NUMBER/head" \
+            "pull/$PR_NUMBER/merge:refs/remotes/pull/$PR_NUMBER/merge"
+          [[ "$(git rev-parse "refs/remotes/pull/$PR_NUMBER/head")" == "$HEAD_SHA" ]]
+          [[ "$(git rev-parse "refs/remotes/pull/$PR_NUMBER/merge")" == "$MERGE_SHA" ]]
+          [[ "$(git rev-parse "${MERGE_SHA}^1")" == "$BASE_SHA" ]]
+          [[ "$(git rev-parse "${MERGE_SHA}^2")" == "$HEAD_SHA" ]]
+          [[ "$(git rev-list --parents --max-count=1 "$MERGE_SHA" | wc -w)" -eq 3 ]]
+      - name: Scan every introduced commit and the synthetic merge
+        id: scan
+        if: steps.fetch.outcome == 'success'
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ steps.resolve.outputs.base_sha }}
+          HEAD_REF: ${{ steps.resolve.outputs.head_ref }}
+          MERGE_SHA: ${{ steps.resolve.outputs.merge_sha }}
+        run: >-
+          node scripts/check-public-surface.mjs
+          --git-range "$BASE_SHA..$MERGE_SHA"
+          --max-commits 101
+          --ref-name "refs/heads/$HEAD_REF"
+      - name: Verify the pull request did not change during the scan
+        id: stable
+        if: steps.fetch.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.resolve.outputs.base_sha }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ steps.resolve.outputs.head_ref }}
+          HEAD_REPO_ID: ${{ steps.resolve.outputs.head_repo_id }}
+          HEAD_REPO_NAME: ${{ steps.resolve.outputs.head_repo_name }}
+          HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
+          MERGE_SHA: ${{ steps.resolve.outputs.merge_sha }}
+          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+        run: |
+          IFS=$'\t' read -r current_state current_base current_head \
+            current_ref current_repo_id current_repo_name current_merge < <(
+              gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" \
+                --jq '[.state, .base.sha, .head.sha, .head.ref, (.head.repo.id | tostring), .head.repo.full_name, .merge_commit_sha] | @tsv'
+            )
+          [[ "$current_state" == "open" ]]
+          [[ "$current_base" == "$BASE_SHA" ]]
+          [[ "$current_head" == "$HEAD_SHA" ]]
+          [[ "$current_ref" == "$HEAD_REF" ]]
+          [[ "$current_repo_id" == "$HEAD_REPO_ID" ]]
+          [[ "${current_repo_name,,}" == "${HEAD_REPO_NAME,,}" ]]
+          [[ "$current_merge" == "$MERGE_SHA" ]]
+      - name: Publish the trusted result on the evaluated merge
+        if: always()
+        env:
+          FETCH_OUTCOME: ${{ steps.fetch.outcome }}
+          GH_TOKEN: ${{ github.token }}
+          MERGE_SHA: ${{ steps.resolve.outputs.merge_sha }}
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+          STABLE_OUTCOME: ${{ steps.stable.outcome }}
+        shell: bash
+        run: |
+          [[ "$MERGE_SHA" =~ ^[0-9a-f]{40,64}$ ]]
+          conclusion=failure
+          summary="The trusted scanner rejected the pull request or its evaluated state changed."
+          if [[ "$FETCH_OUTCOME" == "success" &&
+                "$SCAN_OUTCOME" == "success" &&
+                "$STABLE_OUTCOME" == "success" ]]; then
+            conclusion=success
+            summary="Every introduced commit and the synthetic merge passed the trusted public-boundary scan."
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
+            -f name=public-boundary \
+            -f head_sha="$MERGE_SHA" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f "output[title]=Public boundary: $conclusion" \
+            -f "output[summary]=$summary"
+          [[ "$conclusion" == "success" ]]

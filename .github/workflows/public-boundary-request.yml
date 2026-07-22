@@ -1,0 +1,30 @@
+name: Public Boundary Request
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  request:
+    name: public-boundary-request
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Create a non-executable request marker
+        shell: bash
+        env:
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]
+          mkdir -p "$RUNNER_TEMP/public-boundary-request"
+          printf 'request\n' > "$RUNNER_TEMP/public-boundary-request/marker.txt"
+      - name: Upload the request marker
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: public-boundary-request-${{ github.event.number }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/public-boundary-request/marker.txt
+          if-no-files-found: error
+          retention-days: 1

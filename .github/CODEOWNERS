@@ -1,0 +1,8 @@
+/.github/CODEOWNERS @M47E1
+/.github/workflows/ @M47E1
+/.githooks/ @M47E1
+/scripts/check-public-surface.mjs @M47E1
+/tests/public-surface.test.mjs @M47E1
+/package.json @M47E1
+/package-lock.json @M47E1
+/asset-rights.json @M47E1

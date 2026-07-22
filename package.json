@@ -1,0 +1,51 @@
+{
+  "name": "paradigm-shift-core",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "An accessible, privacy-safe personal operating system starter built with Next.js and Three.js.",
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1 --port 3000",
+    "build": "next build --webpack",
+    "start": "next start --hostname 127.0.0.1 --port 3000",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --test-isolation=none tests/*.test.mjs",
+    "test:e2e": "playwright test",
+    "check:public": "node scripts/check-public-surface.mjs",
+    "check:history": "node scripts/check-public-surface.mjs --git-range",
+    "check:all-history": "node scripts/check-public-surface.mjs --git-all",
+    "setup:hooks": "git config core.hooksPath .githooks",
+    "check": "npm run check:public && npm run lint && npm run typecheck && npm test && npm run build:verify",
+    "build:verify": "cross-env PUBLIC_SITE_URL_ALLOW_LOOPBACK=1 NEXT_PUBLIC_SITE_URL=http://127.0.0.1:3000 next build --webpack"
+  },
+  "engines": {
+    "node": "^24.0.0 || ^26.0.0"
+  },
+  "dependencies": {
+    "@react-three/fiber": "^9.6.1",
+    "lucide-react": "^1.18.0",
+    "next": "16.2.11",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "three": "0.182.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@playwright/test": "^1.61.0",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/three": "0.182.0",
+    "cross-env": "^10.1.0",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.11",
+    "sharp": "0.35.3",
+    "typescript": "^5"
+  },
+  "overrides": {
+    "postcss": "8.5.22",
+    "sharp": "0.35.3"
+  },
+  "packageManager": "npm@11.17.0"
+}

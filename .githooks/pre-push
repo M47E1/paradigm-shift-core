@@ -1,0 +1,55 @@
+#!/bin/sh
+set -eu
+
+zero_sha=0000000000000000000000000000000000000000
+remote_name="${1:-origin}"
+
+npm run check:public
+
+if ! remote_head_info="$(git ls-remote --symref "$remote_name" HEAD)"; then
+  echo "Public-history check refused: the target remote could not be inspected." >&2
+  exit 1
+fi
+remote_default_ref="$(
+  printf '%s\n' "$remote_head_info" |
+    sed -n 's/^ref: \(refs\/heads\/[^[:space:]]*\)[[:space:]]*HEAD$/\1/p' |
+    head -n 1
+)"
+remote_default_sha="$(
+  printf '%s\n' "$remote_head_info" |
+    awk '$2 == "HEAD" && $1 != "ref:" { print $1; exit }'
+)"
+
+ensure_commit_available() {
+  commit_sha="$1"
+  source_ref="$2"
+  if ! git cat-file -e "$commit_sha^{commit}" 2>/dev/null; then
+    git fetch --no-tags "$remote_name" "$source_ref"
+  fi
+  git cat-file -e "$commit_sha^{commit}"
+}
+
+while read -r local_ref local_sha remote_ref remote_sha
+do
+  if [ "$local_sha" = "$zero_sha" ]; then
+    continue
+  fi
+
+  if [ "$remote_sha" = "$zero_sha" ]; then
+    if [ -z "$remote_default_ref" ] || [ -z "$remote_default_sha" ]; then
+      echo "Checking all reachable history for the initial remote reference"
+      npm run check:all-history -- "$local_sha" \
+        --ref-name "$remote_ref"
+      continue
+    fi
+    ensure_commit_available "$remote_default_sha" "$remote_default_ref"
+    base_sha="$remote_default_sha"
+  else
+    ensure_commit_available "$remote_sha" "$remote_ref"
+    base_sha="$remote_sha"
+  fi
+
+  echo "Checking public history for the proposed ref update"
+  npm run check:history -- "$base_sha..$local_sha" \
+    --ref-name "$remote_ref"
+done

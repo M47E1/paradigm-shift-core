@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+    types: [opened, reopened, synchronize, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify-node-${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [24, 26]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - name: Check the current public surface
+        run: npm run check:public
+      - name: Check every pull request commit
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          npm run check:history --
+          "$BASE_SHA..$HEAD_SHA"
+          --ref-name "refs/heads/$HEAD_REF"
+      - name: Check every pushed commit
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DELETED: ${{ github.event.deleted }}
+          HEAD_SHA: ${{ github.sha }}
+          REF_NAME: ${{ github.ref }}
+          SHORT_REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ "$DELETED" == "true" ]]; then
+            exit 0
+          fi
+          base="$BEFORE_SHA"
+          if [[ "$SHORT_REF_NAME" != "$DEFAULT_BRANCH" ]]; then
+            git fetch --no-tags origin "$DEFAULT_BRANCH"
+            if ! base="$(git merge-base "$HEAD_SHA" "origin/$DEFAULT_BRANCH")"; then
+              base=
+            fi
+          fi
+          if [[ -z "$base" || "$base" =~ ^0+$ ]] ||
+             ! git cat-file -e "$base^{commit}" 2>/dev/null ||
+             ! git merge-base --is-ancestor "$base" "$HEAD_SHA"; then
+            npm run check:all-history -- "$HEAD_SHA" --ref-name "$REF_NAME"
+          else
+            npm run check:history -- "$base..$HEAD_SHA" --ref-name "$REF_NAME"
+          fi
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build:verify
+      - run: npm audit --omit=dev --audit-level=high
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: verify
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run test:e2e

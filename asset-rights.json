@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "assets": [
+    {
+      "path": "src/app/icon.svg",
+      "sha256": "6fb58db78fbf2bf602f20f49ea5c8d50a7f84f17b55a76bea5167410575d808c",
+      "owner": "Repository contributors",
+      "source": "Original geometric mark",
+      "license": "MIT",
+      "redistribution": "Allowed",
+      "attribution": "None required",
+      "modifications": "Original repository-authored work",
+      "evidenceId": "repo-original-icon-v1",
+      "status": "APPROVED"
+    }
+  ]
+}
