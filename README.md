@@ -55,6 +55,8 @@ npm audit --omit=dev
 
 The Playwright command builds the production application and starts an isolated server on port 3101. Run `npm run setup:hooks` once per clone so every push checks both the current tree and each commit being introduced to the remote.
 
+On GitHub, `main` accepts rebase-only pull requests after the Node 24, Node 26, cross-browser E2E, and trusted public-boundary checks pass.
+
 ## Routes
 
 | Route | Purpose |
