@@ -10,9 +10,6 @@ export default defineConfig({
   use: {
     baseURL: "http://127.0.0.1:3101",
     headless: true,
-    launchOptions: {
-      args: ["--window-position=-10000,-10000"],
-    },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
@@ -22,6 +19,9 @@ export default defineConfig({
       use: {
         browserName: "chromium",
         viewport: { width: 1440, height: 900 },
+        launchOptions: {
+          args: ["--window-position=-10000,-10000"],
+        },
       },
     },
     {
@@ -31,6 +31,9 @@ export default defineConfig({
         viewport: { width: 390, height: 844 },
         hasTouch: true,
         isMobile: true,
+        launchOptions: {
+          args: ["--window-position=-10000,-10000"],
+        },
       },
     },
     {
