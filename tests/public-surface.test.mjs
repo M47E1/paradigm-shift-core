@@ -16,6 +16,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  parseHistoryCli,
   scanGitHistoryRange,
   scanPublicSurface,
 } from "../scripts/check-public-surface.mjs";
@@ -34,6 +35,43 @@ const assetDefaults = {
   evidenceId: "test-fixture",
   status: "APPROVED",
 };
+
+test("history CLI accepts exactly one complete two-dot range", () => {
+  assert.deepEqual(
+    parseHistoryCli([
+      "--git-range",
+      "release/1.2..HEAD~1",
+      "--max-commits",
+      "25",
+      "--ref-name",
+      "refs/heads/topic",
+    ]),
+    {
+      base: "release/1.2",
+      head: "HEAD~1",
+      maxCommits: 25,
+      refNames: ["refs/heads/topic"],
+    },
+  );
+});
+
+test("history CLI rejects missing, empty, triple-dot, and repeated ranges", () => {
+  for (const target of [
+    "HEAD",
+    "..HEAD",
+    "HEAD..",
+    "HEAD...main",
+    "HEAD....main",
+    "HEAD..main..tip",
+    "HEAD..main..",
+  ]) {
+    assert.throws(
+      () => parseHistoryCli(["--git-range", target]),
+      /history range must use the form <base>\.\.<head>/,
+      target,
+    );
+  }
+});
 
 function digest(contents) {
   return createHash("sha256").update(contents).digest("hex");

@@ -6,25 +6,87 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   request:
     name: public-boundary-request
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 10
     steps:
-      - name: Create a non-executable request marker
+      - name: Check out the trusted base scanner
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Use the repository Node.js version
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Fetch and verify pull request commits
         shell: bash
         env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_SHA: ${{ github.sha }}
           PR_NUMBER: ${{ github.event.number }}
         run: |
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40,64}$ ]]
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40,64}$ ]]
+          [[ "$MERGE_SHA" =~ ^[0-9a-f]{40,64}$ ]]
           [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]
+          [[ -n "$HEAD_REF" ]]
+
+          git fetch --no-tags origin "pull/$PR_NUMBER/head:refs/remotes/pull/$PR_NUMBER/head" "pull/$PR_NUMBER/merge:refs/remotes/pull/$PR_NUMBER/merge"
+          [[ "$(git rev-parse "refs/remotes/pull/$PR_NUMBER/head")" == "$HEAD_SHA" ]]
+          [[ "$(git rev-parse "refs/remotes/pull/$PR_NUMBER/merge")" == "$MERGE_SHA" ]]
+          [[ "$(git rev-parse "$MERGE_SHA^1")" == "$BASE_SHA" ]]
+          [[ "$(git rev-parse "$MERGE_SHA^2")" == "$HEAD_SHA" ]]
+          [[ "$(git rev-list --parents --max-count=1 "$MERGE_SHA" | wc -w)" -eq 3 ]]
+      - name: Scan every introduced commit and the synthetic merge
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          MERGE_SHA: ${{ github.sha }}
+        run: >-
+          node scripts/check-public-surface.mjs
+          --git-range "$BASE_SHA..$MERGE_SHA"
+          --max-commits 101
+          --ref-name "refs/heads/$HEAD_REF"
+      - name: Verify the pull request did not change during the scan
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO_ID: ${{ github.event.pull_request.head.repo.id }}
+          HEAD_REPO_NAME: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_SHA: ${{ github.sha }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          IFS=$'\t' read -r current_state current_base current_head current_ref current_repo_id current_repo_name current_merge < <(
+              gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '[.state, .base.sha, .head.sha, .head.ref, (.head.repo.id | tostring), .head.repo.full_name, .merge_commit_sha] | @tsv'
+            )
+          [[ "$current_state" == "open" ]]
+          [[ "$current_base" == "$BASE_SHA" ]]
+          [[ "$current_head" == "$HEAD_SHA" ]]
+          [[ "$current_ref" == "$HEAD_REF" ]]
+          [[ "$current_repo_id" == "$HEAD_REPO_ID" ]]
+          [[ "${current_repo_name,,}" == "${HEAD_REPO_NAME,,}" ]]
+          [[ "$current_merge" == "$MERGE_SHA" ]]
+      - name: Create a non-executable success marker
+        shell: bash
+        run: |
           mkdir -p "$RUNNER_TEMP/public-boundary-request"
-          printf 'request\n' > "$RUNNER_TEMP/public-boundary-request/marker.txt"
-      - name: Upload the request marker
+          printf 'scan-passed\n' > "$RUNNER_TEMP/public-boundary-request/marker.txt"
+      - name: Upload the success marker
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: public-boundary-request-${{ github.event.number }}-${{ github.run_attempt }}
+          name: public-boundary-scan-${{ github.event.number }}-${{ github.run_attempt }}-${{ github.event.pull_request.base.sha }}-${{ github.event.pull_request.head.sha }}-${{ github.sha }}
           path: ${{ runner.temp }}/public-boundary-request/marker.txt
           if-no-files-found: error
           retention-days: 1

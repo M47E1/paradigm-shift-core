@@ -1427,7 +1427,7 @@ export async function scanGitHistoryRange({
   }
 }
 
-function parseHistoryCli(argumentsList) {
+export function parseHistoryCli(argumentsList) {
   if (argumentsList.length === 0) return null;
   const [mode, target, ...optionArguments] = argumentsList;
   if (!["--git-all", "--git-range"].includes(mode) || !target) {
@@ -1440,7 +1440,11 @@ function parseHistoryCli(argumentsList) {
   let head = target;
   if (mode === "--git-range") {
     const separator = target.indexOf("..");
-    if (separator <= 0 || separator === target.length - 2) {
+    if (
+      separator <= 0 ||
+      target.endsWith("..") ||
+      target.indexOf("..", separator + 1) !== -1
+    ) {
       throw new Error("history range must use the form <base>..<head>");
     }
     base = target.slice(0, separator);
