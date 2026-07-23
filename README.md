@@ -57,6 +57,8 @@ The Playwright command builds the production application and starts an isolated 
 
 On GitHub, `main` accepts rebase-only pull requests after the Node 24, Node 26, cross-browser E2E, and trusted public-boundary checks pass.
 
+The public-boundary result is bound to the exact base, head, and synthetic merge before the trusted publisher accepts it.
+
 ## Routes
 
 | Route | Purpose |
