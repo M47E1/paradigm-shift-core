@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   access,
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -63,10 +64,9 @@ async function fixtureRoot(t) {
   t.after(() => rm(root, { recursive: true, force: true }));
   await writeManifest(root);
   await mkdir(path.join(root, ".githooks"));
-  await writeFile(
-    path.join(root, ".githooks", "pre-push"),
-    trustedPrePushHook,
-  );
+  const hookPath = path.join(root, ".githooks", "pre-push");
+  await writeFile(hookPath, trustedPrePushHook);
+  await chmod(hookPath, 0o755);
   return root;
 }
 
